@@ -22,12 +22,12 @@ Future<int> main(List<String> args) async {
   var runner = BuildCommandRunner();
 
   runner.addCommand(LintCommand(runner));
-  runner.addCommand(AntBuildCommand(runner));
   runner.addCommand(GradleBuildCommand(runner));
   runner.addCommand(TestCommand(runner));
   runner.addCommand(DeployCommand(runner));
   runner.addCommand(GenerateCommand(runner));
   runner.addCommand(VerifyCommand(runner));
+  runner.addCommand(RunIdeCommand(runner));
 
   try {
     return await runner.run(args) ?? 0;
@@ -85,11 +85,12 @@ Future<void> genPluginXml(BuildSpec spec, String destDir, String path) async {
   var templatePath =
       '${path.substring(0, path.length - '.xml'.length)}_template.xml';
   var file =
-      await File(p.join(rootPath, destDir, path)).create(recursive: true);
+  await File(p.join(rootPath, destDir, path)).create(recursive: true);
   log('writing ${p.relative(file.path)}');
   var dest = file.openWrite();
   dest.writeln(
-      "<!-- Do not edit; instead, modify ${p.basename(templatePath)}, and run './bin/plugin generate'. -->");
+      "<!-- Do not edit; instead, modify ${p.basename(
+          templatePath)}, and run './bin/plugin generate'. -->");
   dest.writeln();
   await utf8.decoder
       .bind(File(p.join(rootPath, 'resources', templatePath)).openRead())
@@ -110,7 +111,7 @@ bool genPresubmitYaml(List<BuildSpec> specs) {
   }
 
   var templateFile =
-      File(p.join(rootPath, '.github', 'workflows', 'presubmit.yaml.template'));
+  File(p.join(rootPath, '.github', 'workflows', 'presubmit.yaml.template'));
   var templateContents = templateFile.readAsStringSync();
   // If we need to make many changes consider something like genPluginXml().
   templateContents =
@@ -169,7 +170,8 @@ Future<bool> performReleaseChecks(ProductCommand cmd) async {
       return false;
     }
     if (!cmd.isReleaseValid) {
-      log('the release identifier ("${cmd.release}") must be of the form xx.x (major.minor)');
+      log('the release identifier ("${cmd
+          .release}") must be of the form xx.x (major.minor)');
       return false;
     }
     var gitDir = await GitDir.fromExisting(rootPath);
@@ -178,7 +180,7 @@ Future<bool> performReleaseChecks(ProductCommand cmd) async {
       var branch = await gitDir.currentBranch();
       var name = branch.branchName;
       var expectedName =
-          cmd.isDevChannel ? 'master' : "release_${cmd.releaseMajor}";
+      cmd.isDevChannel ? 'master' : "release_${cmd.releaseMajor}";
       var result = name == expectedName;
       if (!result) {
         result = name.startsWith("release_${cmd.releaseMajor}") &&
@@ -201,7 +203,7 @@ Future<bool> performReleaseChecks(ProductCommand cmd) async {
   }
   // Finally, check that a jxbrowser.properties exists
   var jxBrowserFile =
-      File(p.join(rootPath, 'resources', 'jxbrowser', 'jxbrowser.properties'));
+  File(p.join(rootPath, 'resources', 'jxbrowser', 'jxbrowser.properties'));
   var jxBrowserFileContents = jxBrowserFile.readAsStringSync();
   if (jxBrowserFile.existsSync() &&
       jxBrowserFileContents.isNotEmpty &&
@@ -209,14 +211,15 @@ Future<bool> performReleaseChecks(ProductCommand cmd) async {
       !jxBrowserFileContents.contains('jxbrowser.license.key=<KEY>')) {
     return true;
   } else {
-    log('Release mode requires the jxbrowser.properties file to exist and include a key.');
+    log(
+        'Release mode requires the jxbrowser.properties file to exist and include a key.');
   }
   return false;
 }
 
 List<Map<String, Object?>> readProductMatrix() {
   var contents =
-      File(p.join(rootPath, 'product-matrix.json')).readAsStringSync();
+  File(p.join(rootPath, 'product-matrix.json')).readAsStringSync();
   var map = json.decode(contents);
   return (map['list'] as List<Object?>).cast<Map<String, Object?>>();
 }
@@ -236,8 +239,8 @@ String substituteTemplateVariables(String line, BuildSpec spec) {
       case 'CHANGELOG':
         return spec.changeLog;
       case 'DEPEND':
-        // If found, this is the module that triggers loading the Android Studio
-        // support. The public sources and the installable plugin use different ones.
+      // If found, this is the module that triggers loading the Android Studio
+      // support. The public sources and the installable plugin use different ones.
         return spec.isSynthetic
             ? 'com.intellij.modules.androidstudio'
             : 'com.android.tools.apk';
@@ -292,82 +295,14 @@ void _copyResources(Directory from, Directory to) {
   }
 }
 
-class AntBuildCommand extends BuildCommand {
-  AntBuildCommand(BuildCommandRunner runner) : super(runner, 'build');
-
-  @override
-  Future<int> doit() async {
-    return GradleBuildCommand(runner).doit();
-  }
-
-  @override
-  Future<int> externalBuildCommand(BuildSpec spec) async {
-    // Not used
-    return 0;
-  }
-
-  @override
-  Future<int> savePluginArtifact(BuildSpec spec) async {
-    // Not used
-    return 0;
-  }
-}
-
-class GradleBuildCommand extends BuildCommand {
-  GradleBuildCommand(BuildCommandRunner runner) : super(runner, 'make');
-
-  @override
-  Future<int> externalBuildCommand(BuildSpec spec) async {
-    var pluginFile = File('resources/META-INF/plugin.xml');
-    var studioFile = File('resources/META-INF/studio-contribs.xml');
-    var pluginSrc = pluginFile.readAsStringSync();
-    var studioSrc = studioFile.readAsStringSync();
-    try {
-      await genPluginFiles(spec, 'resources');
-      return await runner.buildPlugin(spec, buildVersionNumber(spec));
-    } finally {
-      pluginFile.writeAsStringSync(pluginSrc);
-      studioFile.writeAsStringSync(studioSrc);
-    }
-  }
-
-  @override
-  Future<int> savePluginArtifact(BuildSpec spec) async {
-    final file = File(releasesFilePath(spec));
-    final version = buildVersionNumber(spec);
-    var source = File('build/distributions/flutter-intellij-$version.zip');
-    if (!source.existsSync()) {
-      // Setting the plugin name in Gradle should eliminate the need for this,
-      // but it does not.
-      // TODO(messick) Find a way to make the Kokoro file name: flutter-intellij-DEV.zip
-      source = File('build/distributions/flutter-intellij-kokoro-$version.zip');
-    }
-    _copyFile(
-      source,
-      file.parent,
-      filename: p.basename(file.path),
-    );
-    await _stopDaemon();
-    return 0;
-  }
-
-  Future<int> _stopDaemon() async {
-    if (Platform.isWindows) {
-      return await exec('.\\third_party\\gradlew.bat', ['--stop']);
-    } else {
-      return await exec('./third_party/gradlew', ['--stop']);
-    }
-  }
-}
-
 /// Build deployable plugin files. If the --release argument is given
 /// then perform additional checks to verify that the release environment
 /// is in good order.
-abstract class BuildCommand extends ProductCommand {
+class GradleBuildCommand extends ProductCommand {
   @override
   final BuildCommandRunner runner;
 
-  BuildCommand(this.runner, String commandName) : super(commandName) {
+  GradleBuildCommand(this.runner) : super('make') {
     argParser.addOption('only-version',
         abbr: 'o',
         help: 'Only build the specified IntelliJ version; useful for sharding '
@@ -386,10 +321,6 @@ abstract class BuildCommand extends ProductCommand {
   @override
   String get description => 'Build a deployable version of the Flutter plugin, '
       'compiled against the specified artifacts.';
-
-  Future<int> externalBuildCommand(BuildSpec spec);
-
-  Future<int> savePluginArtifact(BuildSpec spec);
 
   @override
   Future<int> doit() async {
@@ -461,13 +392,61 @@ abstract class BuildCommand extends ProductCommand {
       }
 
       separator('Built artifact');
-      log(releasesFilePath(spec));
+      final releaseFilePath = releasesFilePath(spec);
+      final file = File(releaseFilePath);
+      final fileSize = file.lengthSync() / 1000000;
+      log('$releaseFilePath, $fileSize MB');
     }
     if (argResults.option('only-version') == null) {
       checkAndClearAppliedEditCommands();
     }
-
     return 0;
+  }
+
+  Future<int> externalBuildCommand(BuildSpec spec) async {
+    var pluginFile = File('resources/META-INF/plugin.xml');
+    var studioFile = File('resources/META-INF/studio-contribs.xml');
+    var pluginSrc = pluginFile.readAsStringSync();
+    var studioSrc = studioFile.readAsStringSync();
+    try {
+      await genPluginFiles(spec, 'resources');
+      return await runner.buildPlugin(spec, buildVersionNumber(spec));
+    } finally {
+      pluginFile.writeAsStringSync(pluginSrc);
+      studioFile.writeAsStringSync(studioSrc);
+    }
+  }
+
+  Future<int> savePluginArtifact(BuildSpec spec) async {
+    final file = File(releasesFilePath(spec));
+
+    // Log the contents of ./build/distributions, this is useful in debugging
+    // in general and especially useful for the Kokoro bot which is run remotely
+    final result = Process.runSync(
+      'ls',
+      ['-laf', '-laf', 'build/distributions'],
+    );
+    log('Content generated in ./build/distributions:\n${result.stdout}');
+
+    var source = File('build/distributions/flutter-intellij.zip');
+    if (!source.existsSync()) {
+      source = File('build/distributions/flutter-intellij-kokoro.zip');
+    }
+    _copyFile(
+      source,
+      file.parent,
+      filename: p.basename(file.path),
+    );
+    await _stopDaemon();
+    return 0;
+  }
+
+  Future<int> _stopDaemon() async {
+    if (Platform.isWindows) {
+      return await exec('.\\third_party\\gradlew.bat', ['--stop']);
+    } else {
+      return await exec('./third_party/gradlew', ['--stop']);
+    }
   }
 }
 
@@ -540,7 +519,11 @@ https://plugins.jetbrains.com/plugin/uploadPlugin
       log('Upload failed: ${processResult.stderr} for file: $filePath');
     }
     final out = processResult.stdout as String;
-    var message = out.trim().split('\n').last.trim();
+    var message = out
+        .trim()
+        .split('\n')
+        .last
+        .trim();
     log(message);
     return processResult.exitCode;
   }
@@ -561,9 +544,9 @@ class GenerateCommand extends ProductCommand {
   @override
   String get description =>
       'Generate plugin.xml, .github/workflows/presubmit.yaml, '
-      'and resources/liveTemplates/flutter_miscellaneous.xml files for the '
-      'Flutter plugin.\nThe plugin.xml.template and product-matrix.json are '
-      'used as input.';
+          'and resources/liveTemplates/flutter_miscellaneous.xml files for the '
+          'Flutter plugin.\nThe plugin.xml.template and product-matrix.json are '
+          'used as input.';
 
   @override
   Future<int> doit() async {
@@ -591,7 +574,7 @@ class GenerateCommand extends ProductCommand {
         .cast<File>()
         .toList();
     final templateFile =
-        File(p.join('resources', 'liveTemplates', 'flutter_miscellaneous.xml'));
+    File(p.join('resources', 'liveTemplates', 'flutter_miscellaneous.xml'));
     var contents = templateFile.readAsStringSync();
 
     log('writing ${p.relative(templateFile.path)}');
@@ -609,7 +592,8 @@ class GenerateCommand extends ProductCommand {
       final regexp = RegExp('<template name="$name" value="([^"]+)"');
       final match = regexp.firstMatch(contents);
       if (match == null) {
-        throw 'No entry found for "$name" live template in ${templateFile.path}';
+        throw 'No entry found for "$name" live template in ${templateFile
+            .path}';
       }
 
       // Replace the existing content in the xml live template file with the
@@ -622,6 +606,42 @@ class GenerateCommand extends ProductCommand {
     }
 
     templateFile.writeAsStringSync(contents);
+  }
+}
+
+/// Run the IDE using the gradle task "runIde"
+class RunIdeCommand extends ProductCommand {
+  @override
+  final BuildCommandRunner runner;
+
+  RunIdeCommand(this.runner) : super('run');
+
+  @override
+  String get description => 'Run the IDE plugin';
+
+  @override
+  Future<int> doit() async {
+    final javaHome = Platform.environment['JAVA_HOME'];
+    if (javaHome == null) {
+      log('JAVA_HOME environment variable not set - this is needed by Gradle.');
+      return 1;
+    }
+    log('JAVA_HOME=$javaHome');
+
+    // TODO(jwren) The IDE run is determined currently by the isUnitTestTarget
+    //  in the product-matrix.json, while useful, a new field should be added
+    //  into the product-matrix.json instead of re-using this field,
+    //  Or, the run IDE should be passed via the command line (I don't like this
+    //  as much.)
+    final spec = specs.firstWhere((s) => s.isUnitTestTarget);
+    return await _runIde(spec);
+  }
+
+  Future<int> _runIde(BuildSpec spec) async {
+    // run './gradlew runIde'
+    return await applyEdits(spec, () async {
+      return await runner.runGradleCommand(['runIde'], spec, '1', 'false');
+    });
   }
 }
 
@@ -882,9 +902,6 @@ class TestCommand extends ProductCommand {
   final BuildCommandRunner runner;
 
   TestCommand(this.runner) : super('test') {
-    argParser.addFlag('unit', negatable: false, help: 'Run unit tests');
-    argParser.addFlag('integration',
-        negatable: false, help: 'Run integration tests');
     argParser.addFlag('skip',
         negatable: false,
         help: 'Do not run tests, just unpack artifaccts',
@@ -907,11 +924,7 @@ class TestCommand extends ProductCommand {
 
     final spec = specs.firstWhere((s) => s.isUnitTestTarget);
     if (!argResults!.flag('skip')) {
-      if (argResults!.flag('integration')) {
-        return await _runIntegrationTests();
-      } else {
-        return await _runUnitTests(spec);
-      }
+      return await _runUnitTests(spec);
     }
     return 0;
   }
@@ -921,9 +934,5 @@ class TestCommand extends ProductCommand {
     return await applyEdits(spec, () async {
       return await runner.runGradleCommand(['test'], spec, '1', 'true');
     });
-  }
-
-  Future<int> _runIntegrationTests() async {
-    throw 'integration test execution not yet implemented';
   }
 }
